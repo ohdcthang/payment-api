@@ -1,0 +1,7 @@
+{
+    "version": 2,
+    "name": "payment-api",
+    "builds": [{ "src": "index.js", "use": "@vercel/node" }],
+    "routes": [{ "src": "/(.*)", "dest": "index.js" }]
+  }
+  
