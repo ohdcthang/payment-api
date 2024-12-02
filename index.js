@@ -7,6 +7,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const CryptoJS = require("crypto-js");
+const config = require("./config.json")
 
 const app = express();
 
@@ -68,6 +69,14 @@ const sendMessageToQueue = async (body) => {
 app.get("/", (_req, res) => {
   res.send("Welcome to Victoria xao quyet sqs API");
 });
+
+app.get("/config", (_req, res) => {
+  try {
+    return res.status(200).json({ config });
+  } catch (error) {
+    return res.status(500).json(error.message);
+  }
+})
 
 app.post("/send-message", authenticateToken, async (req, res) => {
   try {
