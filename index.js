@@ -8,6 +8,11 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const CryptoJS = require("crypto-js");
 const config = require("./config.json")
+const jwt = require('jsonwebtoken');
+const promisify = require('util').promisify;
+const randToken = require('rand-token');
+const sign = promisify(jwt.sign).bind(jwt);
+const verify = promisify(jwt.verify).bind(jwt);
 
 const app = express();
 
@@ -22,28 +27,41 @@ const sqsClient = new SQSClient(configObject);
 const queueUrl =
   "https://sqs.ap-southeast-2.amazonaws.com/474668392244/Victoriaxaoquyet";
 
-const authenticateToken = (req, res, next) => {
+const authenticateToken = async (req, res, next) => {
   try {
-    const appId = req.headers["appid"];
+    // const appId = req.headers["appid"];
 
-    if (!appId) return res.status(401).json({ msg: "Unauthorize" });
-
+    // if (!appId) return res.status(401).json({ msg: "Unauthorize" });
     const authHeader = req.headers["authorization"];
-    const token = authHeader && authHeader.split(" ")[1];
+    const token = authHeader && authHeader?.split(" ")[1];
+    const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET;
 
-    if (!token) return res.status(401).json({ msg: "Unauthorize" });
+    const verified = await verify(token, accessTokenSecret)
 
-    const tokenDecode = CryptoJS.AES.decrypt(token, appId).toString(
-      CryptoJS.enc.Utf8
-    );
+    if (!verified) return res.status(401).json({ msg: "Unauthorize" });
 
-    if (tokenDecode !== SECRET_TOKEN)
-      return res.status(401).json({ msg: "Unauthorize" });
+    // const tokenDecode = CryptoJS.AES.decrypt(token, appId).toString(
+    //   CryptoJS.enc.Utf8
+    // );
+
+    // if (tokenDecode !== SECRET_TOKEN)
+    //   return res.status(401).json({ msg: "Unauthorize" });
 
     next();
   } catch (error) {
     return res.status(401).json({ msg: "Unauthorize" });
   }
+};
+
+const decodeToken = async (token, secretKey) => {
+	try {
+		return await verify(token, secretKey, {
+			ignoreExpiration: true,
+		});
+	} catch (error) {
+		console.log(`Error in decode access token: ${error}`);
+		return null;
+	}
 };
 
 const sendMessageToQueue = async (body) => {
@@ -64,6 +82,23 @@ const sendMessageToQueue = async (body) => {
   });
   const result = await sqsClient.send(command);
   return result;
+};
+
+const generateToken = async (payload, secretSignature, tokenLife) => {
+	try {
+		return await sign(
+			{
+				payload,
+			},
+			secretSignature,
+			{
+				algorithm: 'HS256',
+				expiresIn: tokenLife,
+			},
+		);
+	} catch (error) {
+		return null;
+	}
 };
 
 app.get("/", (_req, res) => {
@@ -87,15 +122,73 @@ app.post("/send-message", authenticateToken, async (req, res) => {
   }
 });
 
-app.post("/authenticate", (req, res) => {
+app.post("/authenticate", async (req, res) => {
   const { appId } = req.body;
 
-  const accessToken = CryptoJS.AES.encrypt(
-    SECRET_TOKEN,
-    appId
-  );
-  return res.status(200).json({ accessToken: accessToken.toString() });
+  // const accessToken = CryptoJS.AES.encrypt(
+  //   SECRET_TOKEN,
+  //   appId
+  // );
+  const accessTokenLife = process.env.ACCESS_TOKEN_LIFE;
+	const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET;
+
+  const dataForAccessToken = {
+		appId,
+	};
+
+  const accessToken = await generateToken(
+		dataForAccessToken,
+		accessTokenSecret,
+		accessTokenLife,
+	);
+
+  const refreshToken = randToken.generate(256)
+
+  return res.status(200).json({ accessToken: accessToken.toString(), refreshToken: refreshToken.toString() });
 });
+
+
+app.post('/refresh', async (req, res) => {
+  const {refreshToken} = req.body
+
+  const accessTokenFromHeader = req.headers.authorization.split(" ")[1];
+
+	if (!accessTokenFromHeader) {
+		return res.status(400).send('Oh no access token');
+	}
+
+
+  if (!refreshToken) {
+		return res.status(400).send('Oh no refresh token');
+	}
+
+  const accessTokenLife = process.env.ACCESS_TOKEN_LIFE;
+
+	const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET;
+
+  const decoded = await decodeToken(
+		accessTokenFromHeader,
+		accessTokenSecret,
+	);
+
+
+  const appId = decoded.payload.appId; 
+
+  const dataForAccessToken = {
+		appId,
+	};
+
+  const accessToken = await generateToken(
+		dataForAccessToken,
+		accessTokenSecret,
+		accessTokenLife,
+	);
+
+  const newRefreshToken = randToken.generate(256)
+
+  return res.status(200).json({ accessToken: accessToken.toString(),  refreshToken: newRefreshToken.toString()});
+
+})
 
 app.listen(8080, () => {
   console.log("listen");
